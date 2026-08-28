@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: ner-landslide-ai
+    runtime: python
+    buildCommand: "cd backend && pip install -r requirements.txt && python manage.py makemigrations monitoring --noinput && python manage.py migrate --noinput && python manage.py seed_locations && python manage.py collectstatic --noinput"
+    startCommand: "cd backend && gunicorn landslide_backend.wsgi:application --bind 0.0.0.0:$PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.3"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: DEVICE_API_KEY
+        generateValue: true

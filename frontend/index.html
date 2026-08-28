@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NER Landslide Intelligence</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+body{background:#07111f;color:#e8f0f7;font-family:system-ui}.card{background:#0d1b2a;border:1px solid #1e344a;border-radius:16px}
+#map{height:560px}.muted{color:#8ea6bb}.navbtn{padding:.55rem .8rem;border-radius:.6rem;background:#13283a}.navbtn:hover{background:#19405a}
+.badge{padding:.2rem .5rem;border-radius:.5rem;font-size:.75rem;font-weight:700}.source{font-size:.72rem;color:#8ea6bb}
+</style></head>
+<body>
+<header class="p-5 border-b border-slate-700"><div class="max-w-7xl mx-auto flex justify-between gap-4 flex-wrap">
+<div><div class="text-cyan-400 text-xs">NORTHEAST INDIA • DISASTER INTELLIGENCE</div><h1 class="text-2xl font-bold">AI Landslide Early Warning</h1><p class="muted text-sm">Live environmental intelligence • explainable risk engine</p></div>
+<span id="status" class="p-2 rounded bg-slate-800">● CHECKING</span></div>
+<nav class="max-w-7xl mx-auto mt-4 flex gap-2 flex-wrap">
+<button class="navbtn" onclick="show('overview')">Overview</button><button class="navbtn" onclick="show('mapPage')">Live Risk Map</button>
+<button class="navbtn" onclick="show('ai')">AI Early Warning</button><button class="navbtn" onclick="show('sensorPage')">IoT Sensors</button>
+<button class="navbtn" onclick="show('weather')">Live Weather</button><button class="navbtn" onclick="show('alertsPage')">Alerts</button>
+<button class="navbtn bg-cyan-700" onclick="refreshAll()">↻ Refresh Live Data</button></nav></header>
+<main class="max-w-7xl mx-auto p-5">
+<section id="overview"><div class="grid md:grid-cols-4 gap-4">
+<div class="card p-5">Regional Risk<h2 id="risk" class="text-4xl font-bold">—</h2><p class="source">Computed from latest available inputs</p></div>
+<div class="card p-5">Active Alerts<h2 id="alerts" class="text-4xl font-bold">—</h2></div>
+<div class="card p-5">Locations<h2 id="locations" class="text-4xl font-bold">—</h2></div>
+<div class="card p-5">Connected Sensors<h2 id="sensors" class="text-4xl font-bold">—</h2><p class="source">ESP32/API devices</p></div></div>
+<div class="card p-5 mt-5"><h2 class="font-semibold mb-2">Risk trend</h2><canvas id="trend"></canvas></div>
+<div class="card p-4 mt-4 source">Weather: <b>Open-Meteo</b>. Terrain/geological susceptibility: location reference data. Soil and ground movement become measured values when an IoT device posts to the sensor API. No simulated sensor stream is used.</div></section>
+
+<section id="mapPage" class="hidden"><div class="card p-3"><div id="map"></div></div></section>
+
+<section id="ai" class="hidden"><div class="card p-5"><div class="flex gap-2 flex-wrap">
+<select id="loc" class="bg-slate-900 p-3 rounded"></select><button onclick="predict()" class="bg-cyan-700 p-3 rounded">Calculate live risk</button></div>
+<p id="dataNote" class="source mt-3"></p><div class="grid md:grid-cols-4 gap-4 mt-6">
+<div>Score<h2 id="score" class="text-4xl">—</h2></div><div>Level<h2 id="level" class="text-2xl">—</h2></div>
+<div>Confidence<h2 id="conf" class="text-2xl">—</h2></div><div>Horizon<h2 id="horizon" class="text-xl">—</h2></div></div>
+<div id="factors" class="grid md:grid-cols-5 gap-3 mt-6"></div><p id="explain" class="muted mt-5"></p></div></section>
+
+<section id="sensorPage" class="hidden"><div class="card p-5 overflow-auto"><div class="flex justify-between gap-2 flex-wrap"><h2 class="text-xl font-bold mb-4">IoT Sensor Network</h2>
+<a class="text-cyan-400 text-sm" href="/api/sensors/ingest/" title="POST endpoint for ESP32 devices">Device API: /api/sensors/ingest/</a></div>
+<input id="search" oninput="renderSensors()" placeholder="Search sensor..." class="bg-slate-900 p-2 rounded mb-3 w-full md:w-auto">
+<table class="w-full text-sm"><thead><tr class="text-left muted"><th>ID</th><th>Type</th><th>Location</th><th>Reading</th><th>Status</th><th>Battery</th></tr></thead><tbody id="sensorBody"></tbody></table>
+<p id="sensorEmpty" class="muted mt-4"></p></div></section>
+
+<section id="weather" class="hidden"><div class="flex justify-between items-center mb-4"><h2 class="text-xl font-bold">Live Weather</h2><button onclick="loadWeather(true)" class="bg-cyan-700 px-3 py-2 rounded">Refresh weather</button></div><div id="weatherCards" class="grid md:grid-cols-3 gap-4"></div></section>
+
+<section id="alertsPage" class="hidden"><div class="card p-5"><h2 class="text-xl font-bold">Alerts & Response</h2><div id="alertList" class="space-y-3 mt-4"></div></div></section>
+</main>
+<script>
+const API_BASE="/api";let locations=[],sensors=[],alerts=[],weatherData=[],map,markers=[],chart;
+const get=p=>fetch(API_BASE+p).then(async r=>{if(!r.ok)throw Error(await r.text());return r.json()});
+const post=(p,d)=>fetch(API_BASE+p,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)}).then(async r=>{let j=await r.json();if(!r.ok)throw Error(j.error||"Request failed");return j});
+function show(id){document.querySelectorAll("main>section").forEach(x=>x.classList.add("hidden"));document.getElementById(id).classList.remove("hidden");if(id==="mapPage"&&map)setTimeout(()=>map.invalidateSize(),100)}
+function esc(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
+async function loadWeather(force=false){weatherData=await get("/weather/"+(force?"?refresh=1":""));renderWeather()}
+function renderWeather(){weatherCards.innerHTML=weatherData.map(w=>`<div class="card p-4"><b>${esc(w.location_name)}</b><div class="text-3xl mt-2">${Number(w.temperature).toFixed(1)}°C</div><div class="muted">Humidity ${Number(w.humidity).toFixed(0)}% • Wind ${Number(w.wind_speed).toFixed(1)} km/h</div><div class="mt-3">Rain 1h: ${Number(w.rainfall_1h).toFixed(1)} mm</div><div>Rain 24h: ${Number(w.rainfall_24h).toFixed(1)} mm</div><div>Rain 7d: ${Number(w.rainfall_7d).toFixed(1)} mm</div><div class="source mt-2">Source: Open-Meteo</div></div>`).join("")}
+async function refreshAll(){try{status.textContent="● REFRESHING";await loadWeather(true);locations=await get("/locations/");sensors=await get("/sensors/");alerts=await get("/alerts/?status=ACTIVE");let d=await get("/dashboard/");risk.textContent=Math.round(d.regional_risk);alertsEl.textContent=d.active_alerts;locationsEl.textContent=d.monitored_locations;sensorsEl.textContent=d.online_sensors+"/"+d.total_sensors;
+let r=await get("/map/risk/");renderMap(r);renderSensors();renderAlerts();loc.innerHTML=locations.map(x=>`<option value="${x.id}">${esc(x.name)}, ${esc(x.state)}</option>`).join("");
+let t=await get("/analytics/risk-trend/");if(chart)chart.destroy();chart=new Chart(document.getElementById("trend"),{type:"line",data:{labels:t.map(x=>new Date(x.timestamp).toLocaleString()),datasets:[{label:"Risk Score",data:t.map(x=>x.risk_score)}]},options:{scales:{y:{min:0,max:100}}}});
+status.textContent="● LIVE";status.className="p-2 rounded bg-emerald-900 text-emerald-300"}catch(e){console.error(e);status.textContent="● DATA ERROR";status.className="p-2 rounded bg-red-900 text-red-300"}}
+const alertsEl=document.getElementById("alerts"),locationsEl=document.getElementById("locations"),sensorsEl=document.getElementById("sensors");
+function renderMap(r){if(!map)map=L.map("map").setView([25.6,92.2],6);if(!map._layers.length)L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:"© OpenStreetMap contributors"}).addTo(map);markers.forEach(x=>map.removeLayer(x));markers=[];r.forEach(x=>{let c=x.risk_level==="CRITICAL"?"red":x.risk_level==="HIGH"?"orange":x.risk_level==="MODERATE"?"gold":"green";let popup=`<b>${esc(x.location)}</b><br>${esc(x.state||"")}<br>Risk: ${x.risk_score==null?"No assessment":Number(x.risk_score).toFixed(1)+"/100"}<br>${esc(x.risk_level)}`;markers.push(L.circleMarker([x.latitude,x.longitude],{radius:10,color:c,fillColor:c,fillOpacity:.8}).addTo(map).bindPopup(popup))})}
+function renderSensors(){let q=(search.value||"").toLowerCase();let rows=sensors.filter(s=>(s.sensor_id+s.sensor_type+s.location_name).toLowerCase().includes(q));sensorBody.innerHTML=rows.slice(0,300).map(s=>`<tr class="border-b border-slate-800"><td>${esc(s.sensor_id)}</td><td>${esc(s.sensor_type)}</td><td>${esc(s.location_name)}</td><td>${Number(s.value).toFixed(2)} ${esc(s.unit)}</td><td>${esc(s.status)}</td><td>${Number(s.battery_level).toFixed(0)}%</td></tr>`).join("");sensorEmpty.textContent=rows.length?"":"No physical IoT devices connected yet. POST readings from an ESP32 to /api/sensors/ingest/."}
+function renderAlerts(){alertList.innerHTML=alerts.map(a=>`<div class="card p-4"><b>${esc(a.alert_level)}</b> — ${esc(a.title)}<p class="muted">${esc(a.reason)}</p><p>Action: ${esc(a.recommended_action)}</p></div>`).join("")||"<p class='muted'>No active alerts</p>"}
+async function predict(){try{let id=+loc.value;risk.textContent="…";let r=await post("/risk/predict/",{location_id:id});score.textContent=r.risk_score+"/100";level.textContent=r.risk_level;conf.textContent=r.ai_confidence+"%";horizon.textContent=r.prediction_horizon;explain.textContent=r.explanation;factors.innerHTML=[["Rainfall",r.rainfall_factor],["Soil",r.soil_moisture_factor],["Slope",r.slope_factor],["Movement",r.ground_movement_factor],["Geology",r.geological_factor]].map(x=>`<div class="card p-3">${x[0]}<b class="block text-xl">${x[1]}</b></div>`).join("");dataNote.textContent="Risk calculated from current Open-Meteo weather + terrain data; measured IoT values are used when available.";await refreshAll()}catch(e){explain.textContent=e.message}}
+refreshAll();setInterval(refreshAll,300000);
+</script></body></html>
